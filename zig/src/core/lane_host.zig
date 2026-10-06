@@ -469,3 +469,78 @@ test "a lane host serves the core's own tokens, in order, and cancels between ro
     e.cancel(2);
     try std.testing.expectEqual(Reason.cancelled, gone.wait());
 }
+
+test "a second turn reports its kept prefix and matches a full read" {
+    const gpa = std.testing.allocator;
+    const prompt = [_]u32{ 3, 1, 4, 1, 5, 9, 2, 6 };
+    const kept: u32 = 4;
+    const second = [_]u32{ 3, 1, 4, 1, 42, 43, 7 };
+    const Box = struct {
+        mutex: std.Io.Mutex = .init,
+        tokens: std.ArrayList(u32) = .empty,
+        cached: ?u32 = null,
+        done: ?Reason = null,
+        fn event(ctx: *anyopaque, _: Id, e: *const Event) void {
+            const b: *@This() = @ptrCast(@alignCast(ctx));
+            b.mutex.lockUncancelable(std.testing.io);
+            defer b.mutex.unlock(std.testing.io);
+            switch (e.*) {
+                .prefilled => |n| b.cached = n,
+                .tokens => |t| b.tokens.appendSlice(gpa, t) catch {},
+                .finished => |f| b.done = f.reason,
+            }
+        }
+        fn wait(b: *@This()) Reason {
+            while (true) {
+                b.mutex.lockUncancelable(std.testing.io);
+                const d = b.done;
+                b.mutex.unlock(std.testing.io);
+                if (d) |r| return r;
+                std.Io.sleep(std.testing.io, .fromMilliseconds(1), .awake) catch {};
+            }
+        }
+    };
+
+    var cfg = try lanes.Config.init(gpa, .{ .exact_width = 8, .gpu_tokens = true, .hidden_rows = true }, 8, 7);
+    defer cfg.deinit(gpa);
+    var target: lanes.fake.Fake = .{ .gpa = gpa };
+    defer target.deinit();
+    var clock: lanes.fake.FixedClock = .{};
+    var core = lanes.Engine.init(gpa, &cfg, target.backend(), clock.clock());
+    defer core.deinit();
+    var host = LaneHost.init(gpa, std.testing.io, &core, .{ .lanes = 2 });
+    try host.start();
+    defer host.stop();
+    const eng = host.engine();
+
+    var first: Box = .{};
+    defer first.tokens.deinit(gpa);
+    const first_req: Request = .{ .prompt = &prompt, .max_tokens = 4, .history_len = kept };
+    try eng.submit(1, &first_req, .{ .ctx = &first, .event = Box.event });
+    try std.testing.expectEqual(Reason.length, first.wait());
+    try std.testing.expectEqual(@as(?u32, 0), first.cached);
+
+    var reused: Box = .{};
+    defer reused.tokens.deinit(gpa);
+    const reused_req: Request = .{ .prompt = &second, .max_tokens = 4, .history_len = kept };
+    try eng.submit(2, &reused_req, .{ .ctx = &reused, .event = Box.event });
+    try std.testing.expectEqual(Reason.length, reused.wait());
+    try std.testing.expectEqual(@as(?u32, kept), reused.cached);
+
+    var fresh_cfg = try lanes.Config.init(gpa, .{ .exact_width = 8, .gpu_tokens = true, .hidden_rows = true }, 8, 7);
+    defer fresh_cfg.deinit(gpa);
+    var fresh_target: lanes.fake.Fake = .{ .gpa = gpa };
+    defer fresh_target.deinit();
+    var fresh_clock: lanes.fake.FixedClock = .{};
+    var fresh_core = lanes.Engine.init(gpa, &fresh_cfg, fresh_target.backend(), fresh_clock.clock());
+    defer fresh_core.deinit();
+    var fresh = LaneHost.init(gpa, std.testing.io, &fresh_core, .{ .lanes = 2 });
+    try fresh.start();
+    defer fresh.stop();
+    var full: Box = .{};
+    defer full.tokens.deinit(gpa);
+    const full_req: Request = .{ .prompt = &second, .max_tokens = 4 };
+    try fresh.engine().submit(1, &full_req, .{ .ctx = &full, .event = Box.event });
+    try std.testing.expectEqual(Reason.length, full.wait());
+    try std.testing.expectEqualSlices(u32, full.tokens.items, reused.tokens.items);
+}
