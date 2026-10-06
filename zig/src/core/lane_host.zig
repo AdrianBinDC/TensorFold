@@ -266,6 +266,7 @@ pub const LaneHost = struct {
             job.proposer.deinit();
             return h.drop(job, "out of memory");
         };
+        // The previous turn's save, or 0. This turn's own cut is stored after, so it cannot hit itself.
         job.cached = h.prompts.match(r.prompt);
         job.stream.cache_len = job.cached;
         if (r.history_len > 0 and r.history_len < r.prompt.len) h.prompts.save(r.prompt[0..r.history_len]) catch return h.drop(job, "out of memory");
@@ -520,6 +521,7 @@ test "a second turn reports its kept prefix and matches a full read" {
     defer host.stop();
     const eng = host.engine();
 
+    // Nothing is saved yet: this turn reports 0 and stores prompt[0..kept] for the next one.
     var first: Box = .{};
     defer first.tokens.deinit(gpa);
     const first_req: Request = .{ .prompt = &prompt, .max_tokens = 4, .history_len = kept };
@@ -527,6 +529,7 @@ test "a second turn reports its kept prefix and matches a full read" {
     try std.testing.expectEqual(Reason.length, first.wait());
     try std.testing.expectEqual(@as(?u32, 0), first.cached);
 
+    // Same host. The new prompt starts with those tokens, so the reported length is kept.
     var reused: Box = .{};
     defer reused.tokens.deinit(gpa);
     const reused_req: Request = .{ .prompt = &second, .max_tokens = 4, .history_len = kept };
@@ -534,6 +537,7 @@ test "a second turn reports its kept prefix and matches a full read" {
     try std.testing.expectEqual(Reason.length, reused.wait());
     try std.testing.expectEqual(@as(?u32, kept), reused.cached);
 
+    // A host with an empty store reads the whole prompt. The reply must match.
     var fresh_cfg = try lanes.Config.init(gpa, .{ .exact_width = 8, .gpu_tokens = true, .hidden_rows = true }, 8, 7);
     defer fresh_cfg.deinit(gpa);
     var fresh_target: lanes.fake.Fake = .{ .gpa = gpa };
