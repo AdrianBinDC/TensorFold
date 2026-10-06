@@ -2,6 +2,7 @@
 const std = @import("std");
 const lanes = @import("lanes");
 const api = @import("engine_api.zig");
+const PromptStore = @import("prompt_store.zig").PromptStore;
 const Allocator = std.mem.Allocator;
 const Id = api.Id;
 const Request = api.Request;
@@ -34,6 +35,7 @@ pub const LaneHost = struct {
     live_tokens: std.ArrayList(u32) = .empty,
     lone: ?api.Lone = null, // the backend's driver for a lone greedy stream; null: every stream in the lane core
     lone_job: ?*Job = null, // the job that driver holds now
+    prompts: PromptStore,
 
     const Mark = struct { at: i96, tokens: u64 };
     const window_ns: i96 = 2 * std.time.ns_per_s;
@@ -48,10 +50,11 @@ pub const LaneHost = struct {
         started: bool = false,
         prefill_sent: bool = false, // a lone driver's prefilled event went out
         began: i96 = 0,
+        cached: u32 = 0, // saved prompt tokens this request starts from
     };
 
     pub fn init(gpa: Allocator, io: std.Io, core: *lanes.Engine, info_: Info) LaneHost {
-        return .{ .gpa = gpa, .io = io, .core = core, .info_ = info_ };
+        return .{ .gpa = gpa, .io = io, .core = core, .info_ = info_, .prompts = PromptStore.init(gpa) };
     }
 
     pub fn start(h: *LaneHost) !void {
@@ -71,6 +74,7 @@ pub const LaneHost = struct {
         h.cancels.deinit(h.gpa);
         h.decoded.deinit(h.gpa);
         h.live_tokens.deinit(h.gpa);
+        h.prompts.deinit();
     }
 
     pub fn engine(h: *LaneHost) Engine {
@@ -262,6 +266,9 @@ pub const LaneHost = struct {
             job.proposer.deinit();
             return h.drop(job, "out of memory");
         };
+        job.cached = h.prompts.match(r.prompt);
+        job.stream.cache_len = job.cached;
+        if (r.history_len > 0 and r.history_len < r.prompt.len) h.prompts.save(r.prompt[0..r.history_len]) catch return h.drop(job, "out of memory");
         job.started = true;
         const began = std.Io.Clock.awake.now(h.io).toNanoseconds();
         if (h.loneFits(job)) return h.runLone(job, began);
@@ -277,7 +284,7 @@ pub const LaneHost = struct {
         if (done > began) h.prefill_rate = @as(f64, @floatFromInt(job.request.prompt.len)) / (@as(f64, @floatFromInt(done - began)) / 1e9);
         h.prefill_at = done;
         h.unlock();
-        emit(job, .{ .prefilled = 0 });
+        emit(job, .{ .prefilled = job.cached });
     }
 
     /// A greedy drafted request alone in the engine, with nothing waiting: the backend's own driver takes it.
@@ -315,7 +322,7 @@ pub const LaneHost = struct {
         const paused = lone.run(lone.ctx, &job.stream, .{ .ctx = h, .committed = Hooks.committed, .yield = Hooks.yield });
         h.lone_job = null;
         const handed = paused catch |e| {
-            if (!job.prefill_sent) emit(job, .{ .prefilled = 0 });
+            if (!job.prefill_sent) emit(job, .{ .prefilled = job.cached });
             h.remove(job);
             h.finish(job, .failed, @errorName(e));
             return true;
@@ -543,4 +550,8 @@ test "a second turn reports its kept prefix and matches a full read" {
     try fresh.engine().submit(1, &full_req, .{ .ctx = &full, .event = Box.event });
     try std.testing.expectEqual(Reason.length, full.wait());
     try std.testing.expectEqualSlices(u32, full.tokens.items, reused.tokens.items);
+}
+
+test {
+    _ = @import("prompt_store.zig");
 }
