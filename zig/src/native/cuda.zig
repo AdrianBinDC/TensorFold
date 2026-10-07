@@ -5,10 +5,11 @@ const cuda = @import("cuda");
 const api = @import("engine_api");
 const lanes = @import("lanes");
 const nemotron = @import("nemotron");
+const flashnext = @import("flashnext");
 const Allocator = std.mem.Allocator;
 
 /// The CUDA families: namespaces with `model_type`, `formats`, `default_context`, `prefill_step` and `open`.
-const registry = .{nemotron.native};
+const registry = .{ nemotron.native, flashnext.native };
 
 pub const backends: []const []const u8 = &.{"cuda"};
 pub const families: []const api.Family = blk: {
@@ -230,4 +231,6 @@ test "chip classes name the compute capability" {
 test "every registered family is listed for capabilities" {
     try std.testing.expectEqual(@as(usize, registry.len), families.len);
     try std.testing.expectEqualStrings("nemotron_h", families[0].model_type);
+    try std.testing.expectEqualStrings("qwen4_exp", families[1].model_type);
+    try std.testing.expectEqualStrings("mlx-q4g32", families[1].formats[0]);
 }
