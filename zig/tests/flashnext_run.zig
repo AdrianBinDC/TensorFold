@@ -1687,4 +1687,3 @@ pub fn main(init: std.process.Init) !void {
     }
     if (same != want.len or bad != 0) std.process.exit(1);
 }
-

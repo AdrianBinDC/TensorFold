@@ -248,7 +248,6 @@ const glue_source =
     \\}
 ;
 
-
 /// Routed and shared experts at full width (FZ_XNEW=1): a 6-bit group read as six aligned words, 16 lanes a gate/up
 /// row (5 groups each) and 4 lanes a down row, 4 simdgroups a threadgroup; routing (top-k, weights) unchanged.
 const xnew_source =
@@ -1159,9 +1158,6 @@ pub const Run = struct {
         return mtl.Size.of(@intCast(a[0].integer), @intCast(a[1].integer), @intCast(a[2].integer));
     }
 
-
-
-
     /// FZ_XPACK: an expert set's rows (gate, up, shared gate, shared up, down, shared down) to the packed layout.
     pub fn repack(r: *Run, ex: []Buf) !void {
         const cb = r.queue.commandBuffer();
@@ -1406,7 +1402,6 @@ pub const Run = struct {
     }
 };
 
-
 /// Past 512 complete 4-key blocks the attention reads each row's 512 best blocks and its tail: the recorded pool,
 /// scores and selection kernels (dispatched at any context), with per-row metadata from the host.
 /// GPU-side rounds: a ring entry's words (keep, source, match length, up to 17 tokens), the arena's history length.
@@ -1479,11 +1474,21 @@ pub const Select = struct {
             }
         };
         return .{
-            .pool = found[0].?, .scores = found[1].?, .select = found[2].?,
-            .start = try B.of(r, 16), .starts = try B.of(r, CATCH * 256), .sc = try B.of(r, rows_max * (CAP / 4) * 4), .keys = try B.of(r, rows_max * KW * 4),
-            .complete = try B.of(r, rows_max * 4), .ends = try B.of(r, rows_max * 4), .counts = try B.of(r, rows_max * 4),
+            .pool = found[0].?,
+            .scores = found[1].?,
+            .select = found[2].?,
+            .start = try B.of(r, 16),
+            .starts = try B.of(r, CATCH * 256),
+            .sc = try B.of(r, rows_max * (CAP / 4) * 4),
+            .keys = try B.of(r, rows_max * KW * 4),
+            .complete = try B.of(r, rows_max * 4),
+            .ends = try B.of(r, rows_max * 4),
+            .counts = try B.of(r, rows_max * 4),
             .sparse = try B.of(r, rows_max * 4),
-            .pooled_shape = try r.buffer(16), .q_shape = try r.buffer(16), .sc_shape = try r.buffer(16), .ids_shape = try r.buffer(16),
+            .pooled_shape = try r.buffer(16),
+            .q_shape = try r.buffer(16),
+            .sc_shape = try r.buffer(16),
+            .ids_shape = try r.buffer(16),
         };
     }
 
@@ -1563,7 +1568,6 @@ pub const Select = struct {
     }
 };
 
-
 /// Block selection in GPU-side rounds: fz_sel_meta writes each round's rows, pooling range and pooled count; the pool
 /// runs at absolute blocks (up to POOL_BLOCKS a round); scores cover an upper bound of the pooled blocks the host keeps.
 /// fz_sel_meta's layout: complete, ends, counts, sparse (MAXR each), then start, count, pooled.
@@ -1588,9 +1592,13 @@ pub const GSelect = struct {
 
     pub fn init(r: *Run, pooled: usize) !GSelect {
         var g: GSelect = .{
-            .sel = .{ .b = try r.buffer(128 * 4) }, .sc = .{ .b = try r.buffer(MAXR * (CAP / 4) * 4) },
-            .keys = .{ .b = try r.buffer(MAXR * KW * 4) }, .pooled_shape = try r.buffer(16), .q_shape = undefined,
-            .sc_shape = try r.buffer(16), .ids_shape = undefined,
+            .sel = .{ .b = try r.buffer(128 * 4) },
+            .sc = .{ .b = try r.buffer(MAXR * (CAP / 4) * 4) },
+            .keys = .{ .b = try r.buffer(MAXR * KW * 4) },
+            .pooled_shape = try r.buffer(16),
+            .q_shape = undefined,
+            .sc_shape = try r.buffer(16),
+            .ids_shape = undefined,
         };
         g.sel.b.slice(i32, 128)[SEL_POOLED] = @intCast(pooled);
         for (0..MAXR + 1) |w| {
@@ -2346,7 +2354,6 @@ pub fn copyDrafts(hist: []const u32, min: usize, out: []u32) usize {
     return 0;
 }
 
-
 /// Prompt chunks of up to PMAX rows: projections on the 6-bit tensor-unit kernels, experts sorted by expert and
 /// gathered, the decode's row kernels at the chunk's rows, and DeltaNet storing only its last row's state.
 pub const PMAX = 8192; // the prompt buffers' rows; `step` cuts the chunks
@@ -2474,24 +2481,62 @@ pub const Prompt = struct {
         };
         const R = PMAX;
         return .{
-            .ids = try B.of(r, R * 4), .pids = try B.of(r, R * 16 * 4), .h = .{ try B.of(r, R * WIDE * 2), try B.of(r, R * WIDE * 2) },
-            .ssp = try B.of(r, R * 10 * 4 * 4), .normed = try B.of(r, R * WIDE * 2), .dn = try B.of(r, R * 324 * 2),
-            .hact = try B.of(r, R * 320 * 2), .inj_a = try B.of(r, R * 4 * 2), .inj_m = try B.of(r, R * 4 * 2),
-            .up = try B.of(r, R * WIDE * 2), .mixed = try B.of(r, R * D * 2), .p = try B.of(r, R * 16480 * 2),
-            .gout = try B.of(r, R * 6144 * 2), .branch = try B.of(r, R * D * 2), .cso = try B.of(r, CS_ROW),
-            .q = try B.of(r, R * 24 * 256 * 2), .kout = try B.of(r, R * 2 * 256 * 2), .iq = try B.of(r, R * 4 * 128 * 2),
-            .po = try B.of(r, 64), .pm = try B.of(r, 64), .aout = try B.of(r, R * 6144 * 2),
-            .pos = try B.of(r, R * 4), .nk = try B.of(r, R * 4), .zeros = try B.of(r, R * 4), .kvmeta = try B.of(r, 16),
-            .lg = try B.of(r, R * 513 * 4), .pick = try B.of(r, R * 10 * 4), .wts = try B.of(r, R * 10 * 4),
-            .cnt = try B.of(r, 512 * 4), .off = try B.of(r, 513 * 4), .cur = try B.of(r, 512 * 4), .row_of = try B.of(r, R * 10 * 4),
-            .xs = try B.of(r, R * 10 * D * 2), .g = try B.of(r, R * 10 * 640 * 2), .u = try B.of(r, R * 10 * 640 * 2),
-            .a = try B.of(r, R * 10 * 640 * 2), .ds = try B.of(r, R * 10 * D * 2), .sg = try B.of(r, R * 640 * 2),
-            .su = try B.of(r, R * 640 * 2), .sa = try B.of(r, R * 640 * 2), .ydown = try B.of(r, R * 11 * D * 2),
-            .emb = try B.of(r, R * D * 2), .kvp = try B.of(r, R * 12800 * 2), .gated = try B.of(r, R * WIDE * 2),
-            .hout = try B.of(r, R * WIDE * 2), .cin = try B.of(r, (PLE_TAIL + R) * WIDE * 2), .rows = try B.of(r, 16),
-            .part = try B.of(r, 8 * R * 324 * 4), .qn = try B.of(r, R * 16 * 128 * 4), .kn = try B.of(r, R * 16 * 128 * 4),
-            .v = try B.of(r, R * 48 * 128 * 4), .gg = try B.of(r, R * 48 * 4), .beta = try B.of(r, R * 48 * 4), .ys = try B.of(r, R * 6144 * 4),
-            .mids = try B.of(r, R * 4), .n_add = try B.of(r, 16),
+            .ids = try B.of(r, R * 4),
+            .pids = try B.of(r, R * 16 * 4),
+            .h = .{ try B.of(r, R * WIDE * 2), try B.of(r, R * WIDE * 2) },
+            .ssp = try B.of(r, R * 10 * 4 * 4),
+            .normed = try B.of(r, R * WIDE * 2),
+            .dn = try B.of(r, R * 324 * 2),
+            .hact = try B.of(r, R * 320 * 2),
+            .inj_a = try B.of(r, R * 4 * 2),
+            .inj_m = try B.of(r, R * 4 * 2),
+            .up = try B.of(r, R * WIDE * 2),
+            .mixed = try B.of(r, R * D * 2),
+            .p = try B.of(r, R * 16480 * 2),
+            .gout = try B.of(r, R * 6144 * 2),
+            .branch = try B.of(r, R * D * 2),
+            .cso = try B.of(r, CS_ROW),
+            .q = try B.of(r, R * 24 * 256 * 2),
+            .kout = try B.of(r, R * 2 * 256 * 2),
+            .iq = try B.of(r, R * 4 * 128 * 2),
+            .po = try B.of(r, 64),
+            .pm = try B.of(r, 64),
+            .aout = try B.of(r, R * 6144 * 2),
+            .pos = try B.of(r, R * 4),
+            .nk = try B.of(r, R * 4),
+            .zeros = try B.of(r, R * 4),
+            .kvmeta = try B.of(r, 16),
+            .lg = try B.of(r, R * 513 * 4),
+            .pick = try B.of(r, R * 10 * 4),
+            .wts = try B.of(r, R * 10 * 4),
+            .cnt = try B.of(r, 512 * 4),
+            .off = try B.of(r, 513 * 4),
+            .cur = try B.of(r, 512 * 4),
+            .row_of = try B.of(r, R * 10 * 4),
+            .xs = try B.of(r, R * 10 * D * 2),
+            .g = try B.of(r, R * 10 * 640 * 2),
+            .u = try B.of(r, R * 10 * 640 * 2),
+            .a = try B.of(r, R * 10 * 640 * 2),
+            .ds = try B.of(r, R * 10 * D * 2),
+            .sg = try B.of(r, R * 640 * 2),
+            .su = try B.of(r, R * 640 * 2),
+            .sa = try B.of(r, R * 640 * 2),
+            .ydown = try B.of(r, R * 11 * D * 2),
+            .emb = try B.of(r, R * D * 2),
+            .kvp = try B.of(r, R * 12800 * 2),
+            .gated = try B.of(r, R * WIDE * 2),
+            .hout = try B.of(r, R * WIDE * 2),
+            .cin = try B.of(r, (PLE_TAIL + R) * WIDE * 2),
+            .rows = try B.of(r, 16),
+            .part = try B.of(r, 8 * R * 324 * 4),
+            .qn = try B.of(r, R * 16 * 128 * 4),
+            .kn = try B.of(r, R * 16 * 128 * 4),
+            .v = try B.of(r, R * 48 * 128 * 4),
+            .gg = try B.of(r, R * 48 * 4),
+            .beta = try B.of(r, R * 48 * 4),
+            .ys = try B.of(r, R * 6144 * 4),
+            .mids = try B.of(r, R * 4),
+            .n_add = try B.of(r, 16),
         };
     }
 
@@ -2603,17 +2648,17 @@ pub const Prompt = struct {
         r.enc.dispatchThreads(if (p.skip & 64 == 0) mtl.Size.of(((513 + 63) / 64) * 128, (rows + 63) / 64, 1) else mtl.Size.of(1, 1, 1), mtl.Size.of(if (p.skip & 64 == 0) 128 else 1, 1, 1));
         p.barrier();
         if (p.skip & 128 == 0) {
-        p.bind(p.pl[4], &.{ b.lg, b.pick, b.wts, b.cnt });
-        r.enc.dispatchThreads(mtl.Size.of(32, rows, 1), mtl.Size.of(32, 1, 1));
-        p.barrier();
-        p.bind(p.pl[5], &.{ b.cnt, b.off, b.cur });
-        r.enc.dispatchThreads(mtl.Size.of(512, 1, 1), mtl.Size.of(512, 1, 1));
-        p.barrier();
-        p.bind(p.pl[6], &.{ b.pick, b.cur, b.row_of });
-        const np: i32 = @intCast(pairs);
-        r.enc.setBytes(std.mem.asBytes(&np), 3);
-        r.enc.dispatchThreads(mtl.Size.of(pairs, 1, 1), mtl.Size.of(256, 1, 1));
-        p.barrier();
+            p.bind(p.pl[4], &.{ b.lg, b.pick, b.wts, b.cnt });
+            r.enc.dispatchThreads(mtl.Size.of(32, rows, 1), mtl.Size.of(32, 1, 1));
+            p.barrier();
+            p.bind(p.pl[5], &.{ b.cnt, b.off, b.cur });
+            r.enc.dispatchThreads(mtl.Size.of(512, 1, 1), mtl.Size.of(512, 1, 1));
+            p.barrier();
+            p.bind(p.pl[6], &.{ b.pick, b.cur, b.row_of });
+            const np: i32 = @intCast(pairs);
+            r.enc.setBytes(std.mem.asBytes(&np), 3);
+            r.enc.dispatchThreads(mtl.Size.of(pairs, 1, 1), mtl.Size.of(256, 1, 1));
+            p.barrier();
         }
         if (p.skip & 256 == 0) {
             p.bind(p.pl[7], &.{ b.mixed, b.row_of, b.xs });
