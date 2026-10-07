@@ -10,6 +10,14 @@ const Allocator = std.mem.Allocator;
 /// The CUDA families: namespaces with `model_type`, `formats`, `default_context`, `prefill_step` and `open`.
 const registry = .{nemotron.native};
 
+/// Nemotron's prompt-cache copies. A file-level value so the store's pointer stays valid for the process.
+const nemotron_snaps: api.prompt_cache.Snapshots.VTable = .{
+    .bytes = nemotron.native.snap_bytes,
+    .save = nemotron.native.snap_save,
+    .restore = nemotron.native.snap_restore,
+    .drop = nemotron.native.snap_drop,
+};
+
 pub const backends: []const []const u8 = &.{"cuda"};
 pub const families: []const api.Family = blk: {
     var out: [registry.len]api.Family = undefined;
@@ -71,6 +79,7 @@ const Host = struct {
     clock: lanes.backend.WallClock,
     core: lanes.Engine,
     host: api.LaneHost,
+    store: ?*api.prompt_cache.Store = null, // kept Nemotron states; null when the budget is 0
 
     fn close(p: *anyopaque) void {
         const h: *Host = @ptrCast(@alignCast(p));
@@ -78,6 +87,10 @@ const Host = struct {
         h.core.deinit();
         h.cfg.deinit(h.gpa);
         h.ctx.makeCurrent() catch {};
+        if (h.store) |s| {
+            s.deinit();
+            h.gpa.destroy(s);
+        }
         h.release(h.family);
         h.ctx.deinit();
         h.driver.close();
@@ -216,8 +229,28 @@ fn openWith(comptime F: type, a: Allocator, gpa: Allocator, io: std.Io, o: api.O
     h.core = lanes.Engine.init(gpa, &h.cfg, h.backend(), h.clock.clock());
     errdefer h.core.deinit();
     h.host = api.LaneHost.init(gpa, io, &h.core, .{ .lanes = o.lanes, .context_window = @intCast(window), .prefill_step = F.prefill_step });
+    h.store = null;
+    const budget = cacheBudget(o);
+    if (budget > 0) {
+        const pc = api.prompt_cache;
+        const store = try gpa.create(pc.Store);
+        errdefer gpa.destroy(store);
+        store.* = pc.Store.init(gpa, .{ .ptr = loaded.target, .vtable = &nemotron_snaps }, .{}, budget);
+        errdefer store.deinit();
+        h.store = store;
+        h.host.cache = store;
+        std.log.info("prompt cache: {d:.1} GiB for kept Nemotron states", .{@import("cache_fit.zig").gibs(budget)});
+    }
     try h.host.start();
     return .{ .engine = h.host.engine(), .close = Host.close, .ctx = h };
+}
+
+/// Kept states' budget: `--prompt-cache-gib` when set (0 turns it off), else what 70% of RAM leaves, capped at 16 GiB.
+fn cacheBudget(o: api.Open) u64 {
+    const fit = @import("cache_fit.zig");
+    if (o.prompt_cache_gib) |g| return if (g > 0) std.math.lossyCast(u64, g * @as(f64, @floatFromInt(fit.GiB))) else 0;
+    const total = fit.ram() orelse return 8 * fit.GiB;
+    return @min((total / 100 * fit.SHARE_PERCENT) -| fit.MARGIN, 16 * fit.GiB);
 }
 
 test "chip classes name the compute capability" {

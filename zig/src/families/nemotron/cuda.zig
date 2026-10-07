@@ -15,6 +15,7 @@ pub const Drafter = @import("cuda_drafts.zig").Drafter;
 pub const Head = @import("cuda_mtp.zig").Head;
 pub const Lanes = @import("cuda_lanes.zig").Cuda;
 pub const native = @import("cuda_native.zig");
+pub const reuse = @import("cuda_reuse.zig");
 
 test {
     _ = @import("config.zig");
@@ -24,4 +25,5 @@ test {
     _ = @import("cuda_sampler.zig");
     _ = @import("cuda_torch_ops.zig");
     _ = decode;
+    _ = engine;
 }
