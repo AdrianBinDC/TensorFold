@@ -33,6 +33,13 @@ COPIES = {
     "gdn.cu": ("src/tensorfold/cuda/kernels/gdn.cu", 1, 319, (3, 4), (10, "tf_gdn"), GDN_FOOTER),
     "qmm_frag.cuh": ("src/tensorfold/cuda/kernels/qmm_frag.cuh", 1, 118, (), None, ""),
     "experts.cuh": ("src/tensorfold/cuda/experts.cuh", 1, 105, (), None, ""),
+    "qmm.cu": (
+        "src/tensorfold/cuda/kernels/qmm.cu", 1, 230, (3, 5), (12, "tf_qmm"),
+        "// Decode lane: groups of 32, 16 rows, 64 columns, one by four warps, four stages, bf16 out.\n"
+        "template __global__ void tf_qmm::qmm_kernel<32, 16, 64, 1, 4, 4, false, false, false>(\n"
+        "    const __nv_bfloat16*, const float*, const uint32_t*, const __nv_bfloat16*, const __nv_bfloat16*,\n"
+        "    void*, float*, int, int, int, int, int, int, int);\n",
+    ),
     "qmm_group.cu": (
         "src/tensorfold/cuda/kernels/qmm_group.cu", 1, 348, (3, 5), (14, "tf_qmm_group"),
         "// The instantiations Nemotron's windows launch on sm_121 (tile 2: rows <= 16, bf16 out).\n"
