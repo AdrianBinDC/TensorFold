@@ -59,7 +59,12 @@ COPIES = {
         "#define TF_EXPERT(EPI) template __global__ void tf_experts::expert_kernel<64, 1, EPI, 2, 4>(const __nv_bfloat16*, \\\n"
         "    int, int, const uint4*, int, int, const int*, const int*, const int*, void*, int, float);\n"
         "TF_EXPERT(1)\n"
-        "TF_EXPERT(0)\n",
+        "TF_EXPERT(0)\n"
+        "// Groups of 32: SwiGLU gate and up together (epilogue 2), and the down projection to fp32.\n"
+        "template __global__ void tf_experts::expert_kernel<32, 2, 2, 2, 4>(const __nv_bfloat16*, \\\n"
+        "    int, int, const uint4*, int, int, const int*, const int*, const int*, void*, int, float);\n"
+        "template __global__ void tf_experts::expert_kernel<32, 1, 0, 2, 4>(const __nv_bfloat16*, \\\n"
+        "    int, int, const uint4*, int, int, const int*, const int*, const int*, void*, int, float);\n",
     ),
     "experts_prefill.cu": (
         "src/tensorfold/cuda/experts_prefill.cu", 1, 153, (3, 4, 7), (11, "tf_experts_prefill"),
@@ -71,8 +76,10 @@ COPIES = {
     ),
     "experts_pack.cu": (
         "src/tensorfold/cuda/experts_pack.cu", 1, 42, (3, 4, 6), (8, "tf_experts_pack"),
-        "// Groups of 64 inputs.\n"
+        "// Groups of 64 inputs, then groups of 32.\n"
         "template __global__ void tf_experts_pack::pack_kernel<2>(const uint32_t*, const uint16_t*, const uint16_t*,\n"
+        "    uint32_t*, int, int, int, int);\n"
+        "template __global__ void tf_experts_pack::pack_kernel<1>(const uint32_t*, const uint16_t*, const uint16_t*,\n"
         "    uint32_t*, int, int, int, int);\n",
     ),
     "prefill_attention.cu": (
