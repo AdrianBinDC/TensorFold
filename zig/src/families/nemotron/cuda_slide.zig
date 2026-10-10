@@ -1,6 +1,6 @@
-//! Nemotron's Sliding Weights learner on Metal: the backend-neutral learner over the Metal trainer.
+//! Nemotron's Sliding Weights learner on CUDA: the backend-neutral learner over the CUDA trainer.
 const learner = @import("learner.zig");
-const train = @import("train.zig");
+const train = @import("cuda_train.zig");
 
 pub const Backend = train.Backend;
 pub const Example = learner.Example;
